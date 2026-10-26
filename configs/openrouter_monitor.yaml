@@ -1,0 +1,6 @@
+url: https://openrouter.ai/api/v1/chat/completions
+provider: google-ai-studio
+reasoning_effort: medium
+concurrency: 16
+max_retries: 6
+timeout_s: 300
