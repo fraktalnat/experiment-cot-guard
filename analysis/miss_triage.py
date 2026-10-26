@@ -24,12 +24,12 @@ from typing import Any, Callable, Hashable, TypeVar
 import yaml
 
 from analysis.explore_monitor_results import extract_choice
+from gen.generate import RETRYABLE_HTTP
 
 JUDGE_BUCKETS = ("never_noticed", "attributed", "harmless")
 D_BUCKET = "answered_d"
 UNPARSED = "unparsed"
 BUCKETS = JUDGE_BUCKETS + (D_BUCKET,)
-RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504}
 
 T = TypeVar("T")
 
