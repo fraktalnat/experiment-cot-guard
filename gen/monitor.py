@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, List
 
 import rich
+import yaml
 from fire import Fire
 
 from config import (
@@ -18,7 +19,12 @@ from config import (
     TEMP_DIRECTORY,
 )
 from constants import FILTER_MODES
-from gen.generate import GenerationConfig, run_api_generation, run_vllm_generation
+from gen.generate import (
+    GenerationConfig,
+    run_api_generation,
+    run_openrouter_generation,
+    run_vllm_generation,
+)
 from utils import (
     load_jsonl,
     save_jsonl,
@@ -201,6 +207,7 @@ def monitor_infer_main(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     scaling_factor: float = 2.0,  # For monitor models, we scale context length
     model_id: str = "",
+    openrouter_config: str = "configs/openrouter_monitor.yaml",
 ) -> str:
     assert filter_mode in FILTER_MODES, f"filter_mode must be one of {FILTER_MODES}"
 
@@ -299,6 +306,18 @@ def monitor_infer_main(
         run_vllm_generation(temp_input, temp_output, gen_config)
     elif backend == "api":
         run_api_generation(temp_input, temp_output, gen_config)
+    elif backend == "openrouter":
+        checkpoint_path = os.path.join(
+            TEMP_DIRECTORY,
+            "openrouter",
+            f"{os.path.relpath(output_path_base, GLOBAL_DIRECTORY)}.{'.'.join(monitor_types)}.partial.jsonl",
+        )
+        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+        with open(openrouter_config) as f:
+            or_cfg = yaml.safe_load(f)
+        run_openrouter_generation(
+            temp_input, temp_output, gen_config, or_cfg, checkpoint_path
+        )
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
