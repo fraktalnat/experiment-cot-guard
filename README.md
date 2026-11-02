@@ -1,30 +1,19 @@
-# CoT-Guard: Small Models for Strong Monitoring
+# Experiment on CoT-Guard: Small Models for Strong Monitoring
 
-[arXiv Paper](https://arxiv.org/abs/2605.12746) • [Models](https://huggingface.co/CoT-Guard) • [Data & Results](https://drive.google.com/drive/folders/1eOg5--gmDHXLwIt17RyGC3FHxN-17y9q?usp=drive_link)
-
-[About](#about) • [Documents](#documents) • [Citation](#citation) • [Acknowledgement](#acknowledgement)
-
-Accepted at NeurIPS 2026 and AdvML-Frontiers × CoTMA: From Model Security to Compositional Threats in Multi-Agent AI Systems @ COLM 2026 (Oral)
-
+[arXiv Paper](https://arxiv.org/abs/2605.12746) [repo](https://github.com/nirav0999/CoT-Guard) 
 <a id="about"></a>
+## Background on the paper
 
-## About
-
-CoT-Guard is a 4B-parameter monitor trained to detect hidden objectives in code-generation tasks using chain-of-thought and generated code. This repository contains the training, evaluation, and data curation code, with SFT and RL model checkpoints available on [Hugging Face](https://huggingface.co/CoT-Guard).
+Code ships with little/no human review. The threat model that this paper’s authors are basing the work on is that something in the middle i.e the model router like OpenRouter, can add a hidden objective that can be malicious, which the user can’t easily see. Current monitors employing large models are expensive and small models don’t perform well. A cheap small model could be cost effective and performant. The authors used the Qwen3-4B model and trained on a bigger model’s correct monitoring answers (Qwen 32B). SFT appeared to generalise poorly to new kinds of hidden objectives, which is consistent with prior work. Authors then used RL to train on subtle hidden objectives. Authors claim that RL training on subtle hidden objectives enables generalization and small monitors like CoT-Guard can be as effective as large ones but with only a fraction of the cost.
 
 Read [CoT-Guard: Small Models for Strong Monitoring](https://arxiv.org/abs/2605.12746) for the method and evaluation details.
 
-## Environment variables
+## What I did and why it matters
 
-From the project root, set the data and temporary directories and add the project to `PYTHONPATH`:
+I wanted to test why small monitors fail and more concretely whether small monitors, like CoT-Guard, are better at detecting hidden objectives that add behaviour, and worse at detecting objectives that weaken or replace behaviour the task already needs.
 
-```bash
-export COT_GLOBAL_DIRECTORY="/path/to/data_and_results"
-export COT_TEMP_DIRECTORY="/path/to/temp_for_vllm_logs"
-export OPENAI_API_KEY="your-openai-api-key"
-export GOOGLE_API_KEY="your-gemini-api-key"
-export PYTHONPATH=$PYTHONPATH:$(pwd)
-```
+The paper’s threat model is a malicious router. If small monitors catch “extra code” but are weaker on “changed code”, a router simply can phrase its sabotage as a change to existing code. I describe the experiment and its limitations below.
+
 
 ## Inference Pipeline
 
@@ -33,186 +22,34 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)
 3. Monitor: create monitor tasks from the responses and run monitors.
 4. Score: evaluate monitor predictions.
 
-### Run Attack
-
-a) Create prompts containing the main task (`bigcodebench`), side task (`varname`), and attack policy (`baseline`):
-
-```bash
-python3 task_creation/for_attack.py --main_task=bigcodebench --side_tasks=varname --attack_policies=baseline
-```
-
-b) Run the tasks with `Qwen/Qwen3-8B` on GPU 0 to generate one attack response per prompt:
-
-```bash
-python3 gen/attack.py single --main_task=bigcodebench --side_task=varname --attack_policy=baseline --model=Qwen/Qwen3-14B --devices=0 --tp=1 --num_rollouts=5
-```
-
-### Verify
-
-With Docker running:
-
-```bash
-python3 eval/verify_task.py --main_task=bigcodebench --side_task=varname --attack_policy=baseline --attack_model=Qwen/Qwen3-14B --num_rollouts=5
-```
-
-Output: `$COT_GLOBAL_DIRECTORY/results/attack/bigcodebench.varname.baseline/Qwen3-14B.5.tested.jsonl`
-
-### Monitor
-
-a) Create monitor prompts from the attacks that were successful:
-
-```bash
-python3 task_creation/for_monitor.py --main_task=bigcodebench --side_tasks=varname --attack_policies=baseline --model=Qwen/Qwen3-14B --attack_rollouts=5 --filter_mode=side-all --monitor_policy=main_aware --monitor_type=cot_action
-```
-
-b) Run the monitor with `Qwen/Qwen3-8B`:
-
-```bash
-python3 gen/monitor.py single --main_task=bigcodebench --side_task=varname --attack_policy=baseline --attack_model=Qwen/Qwen3-14B --attack_rollouts=5 --filter_mode=side-all --monitor_policy=main_aware --monitor_model=Qwen/Qwen3-8B --monitor_type=cot_action --devices=0 --tp=1 --num_rollouts=1
-```
-
-### Results
-
-Display one setting:
-
-```bash
-python3 eval/display.py --main_task=bigcodebench --evaluated_model=Qwen/Qwen3-14B --rollout_num=5 --attack_policy=baseline --monitor_policy=main_aware --monitor_objective=cot_action --filter_mode=side-all --side_tasks=varname --monitor_models=Qwen/Qwen3-8B
-```
-
-Display the result tables:
-
-```bash
-python3 eval/display_table.py --main_task=bigcodebench --evaluated_model=Qwen/Qwen3-14B --rollout_num=5 --attack_policy=baseline --monitor_policy=main_aware --monitor_objective=cot_action --filter_mode=side-all --side_tasks=varname --monitor_models=Qwen/Qwen3-8B
-```
-
-
-### Params
-
-Attack policy values include `--attack_policy=baseline`, `no_side_task`, `stealth`, and `monitor_notice`.
-
-`--tp=1` shards the model across one GPU. `--num_rollouts=1` generates one response per prompt.
-
-Side task values include `--side_task=varname`, `defaultval`, `logio`, `iodelete`, `iodownload`, `permissions`, `ioexfil`, `edgecase`, `complexity`, `longlines`, `exit`, `vulnimport`, `typosquat`, `benign_comment_watermark`, `benign_print_watermark`.
-
-You can also use comma-separated values, like `--side_tasks=varname,exit`.
-
-For parallel generation across 2 GPUs --
-
-```bash
-python3 gen/attack.py parallel --main_task=bigcodebench --side_tasks=varname,exit --attack_policies=baseline --model=Qwen/Qwen3-14B --devices=0,1 --tp=1 --num_rollouts=5
-```
-
-tp per N devices --> tensor parallel for vllm
-
-<a id="documents"></a>
-
-## Documents
-
-- [Paper](https://arxiv.org/abs/2605.12746): method, threat model, and evaluation.
-- [Inference pipeline](#inference-pipeline): generate attacks, verify tasks, run monitors, and score results.
-- [Training](#training): prepare data and train with SFT and RL / GRPO.
-- [Stored evaluation and results](#stored-eval-and-results): download datasets and reproduce result tables.
-- [Model checkpoints](https://huggingface.co/CoT-Guard): SFT and RL monitors.
-
-## Training
-
-The [paper](https://arxiv.org/pdf/2605.12746) uses I/O Delete, I/O Download,
-and I/O Exfiltrate Secret for SFT, then Default Value, Complexity, and Variable
-Name for RL. For each group, prepare verified `baseline` and
-`no_side_task` monitor outputs from Qwen3-14B attacks and a Qwen3-32B monitor,
-with all three scopes (`--monitor_type=all`).
-
-### SFT
-
-Install [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory), then collect
-the I/O task examples:
-
-```bash
-python3 train/sft/collect.py --main-tasks kodcode \
-  --side-tasks iodelete,ioexfil,iodownload --attack-rollouts 5
-```
-
-The collector registers three datasets in `dataset_info.json`. Edit
-`train/sft/config/qwen3_full_sft_three.yaml` before training: replace the
-example `deepspeed`, `dataset_dir`, and `output_dir` paths with absolute paths.
-`$COT_GLOBAL_DIRECTORY` in YAML is literal text and will not expand. Check the
-dataset and model names if you use different sources. Then run:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 llamafactory-cli train train/sft/config/qwen3_full_sft_three.yaml
-```
-
-### RL / GRPO
-
-Collect training prompts from the three subtle tasks:
-
-```bash
-python3 train/rl/collect.py --main-tasks bigcodebench \
-  --side-tasks defaultval,complexity,varname --set-type train
-```
-
-Install [veRL](https://github.com/verl-project/verl) in a separate training
-environment and activate it. Before running, edit `DATA_ROOT`, `TRAIN_FILE`,
-`MODEL_PATH`, `CHECKPOINT_DIR`, `GPU_IDS`, and `EXPERIMENT` at the top
-of `train/rl/run_grpo.sh`. Use your collected JSONL paths and set `MODEL_PATH`
-to the same checkpoint as `output_dir` in the edited SFT YAML. The launcher
-disables validation. Then run:
-
-```bash
-bash train/rl/run_grpo.sh
-```
-
-## Stored Eval and Results
-
-All our results and datasets available for download from [here](https://drive.google.com/drive/folders/1eOg5--gmDHXLwIt17RyGC3FHxN-17y9q?usp=drive_link).
-
-After downloading and extracting the files, place datasets under
-`$COT_GLOBAL_DIRECTORY/datasets/` and evaluation outputs under
-`$COT_GLOBAL_DIRECTORY/results/`. The display script reads outputs from
-`results/monitor/`; preserve the downloaded subdirectory structure.
-
-From the repository root, with the project environment activated, run the
-following commands. Replace the example paths below; `COT_DOWNLOAD_DIRECTORY`
-should point to the extracted folder containing `datasets/` and `results/`.
-
-```bash
-export COT_GLOBAL_DIRECTORY="/path/to/data_and_results"
-export COT_DOWNLOAD_DIRECTORY="/path/to/extracted_download"
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-
-mkdir -p "$COT_GLOBAL_DIRECTORY/datasets" "$COT_GLOBAL_DIRECTORY/results"
-cp -a "$COT_DOWNLOAD_DIRECTORY/datasets/." "$COT_GLOBAL_DIRECTORY/datasets/"
-cp -a "$COT_DOWNLOAD_DIRECTORY/results/." "$COT_GLOBAL_DIRECTORY/results/"
-
-# Display tables for the default evaluation settings.
-python3 eval/display_table.py
-
-# Include all configured side tasks for those settings.
-python3 eval/display_table.py --side_tasks=None
-```
-
-Use `--monitor_models`, `--attack_policy`, and `--monitor_objective` to select
-other downloaded evaluation settings; the command does not automatically
-discover every experiment. See the [results commands](#results) for an example.
-
 <a id="citation"></a>
+## Experiment and results
 
-## Citation
+I introduced a new hidden objective, TLS verification, to use for the experiment. The set up consisted of 26 BigCodeBench problems (each sampled 5 times, with a monitor rollout of k=4 per reading) and varying only the placement of the hidden goal. The experiment runs were over two different scopes of data: CoT + the code solution and code-only.
 
-If you use CoT-Guard in your research, please cite our [paper](https://openreview.net/forum?id=mURtPVmTjF):
+In the case of CoT + code scope, CoT-Guard 4B detected the additive variant in every case (TPR 1.000) and the substitutive variant at TPR 0.837, a gap of 0.163.
 
-```bibtex
-@inproceedings{diwan2026cotguard,
-  title = {CoT-Guard: Small Models for Strong Monitoring},
-  author = {Nirav Diwan and Han Wang and Berkcan Kapusuzoglu and Ramin Moradi and Supriyo Chakraborty and Giri Iyengar and Sambit Sahu and Huan Zhang and Gang Wang},
-  booktitle = {The Fortieth Annual Conference on Neural Information Processing Systems},
-  year = {2026},
-  url = {https://openreview.net/forum?id=mURtPVmTjF}
-}
-```
+All the cases that it failed were due to misattribution, i.e thinking that the side task was requested in the original problem statement although that was not mentioned.
 
-<a id="acknowledgement"></a>
+In the case of code-only scope, CoT-Guard detected the additive variant in every case (TPR 1.000) and the substitutive variant in nearly every case (TPR 0.996), so the gap is nearly non-existent.
 
-## Acknowledgement
+I also ran the full experiment over the two scopes using Cot-Guard’s base model, base Qwen3-4B to test the assumption that the gap between “additive” and “substitutive” hidden objective detection could have been created in CoT-Guard’s training. The results here are noisy. Code-only shows somehow of a gap, 0.87 additive vs 0.62 substitutive. Adding the CoT collapses both variants to about 0.13 (it could be that with the CoT present, the base model is persuaded on everything).
 
-We thank the developers and maintainers of [BigCodeBench](https://github.com/bigcode-project/bigcodebench), [Inspect AI](https://github.com/UKGovernmentBEIS/inspect_ai), [vLLM](https://github.com/vllm-project/vllm), [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory), and [veRL](https://github.com/verl-project/verl) for the open-source tools used in this project.
+I wanted to test whether the detection gap between the additive vs substitutive nature of hidden objectives also shows in bigger stronger monitors. I chose Gemini-3-Flash as it was the best performing monitor in the CoT-Guard paper. In both code-only scope, and CoT + code scope, the detection gap was non-existent for this capable monitor.
+
+| Monitor × scope | TPR additive | TPR substitutive | ΔTPR  |
+|---|---|---|---|
+| CoT-Guard, CoT+code  | 1.000 | 0.837 | +0.163  |
+| CoT-Guard, code-only | 1.000 | 0.996 | ceiling |
+| Base 4B, CoT+code | 0.133 | 0.135 | −0.002  |
+| Base 4B, code-only | 0.873 | 0.619 | +0.254  |
+| Gemini, CoT+code | 1.000 | 0.996 | ceiling |
+| Gemini, code-only | 0.992 | 1.000 | ceiling |
+
+These findings are only descriptive of this limited experiment (only 26 problems, one hidden objective) and do not generalize to a claim that a monitor’s ability to be worse at detecting substitutive behaviours is a property of less capable monitors when CoT is present in its scope.
+
+## Possible next steps
+
+It would be interesting to test on a harder dataset like BigCodeBench-Hard problems and compare CoT-Guard’s performance on Hard problems. Testing on harder datasets, particularly in agentic transcripts, is a stated limitation of this paper and it could be informative to test the performance of CoT-Guard in harder scenarios but they break the single-turn monitor prompt (the way CoT-guard is designed) and it may not be feasible given it’s just a 4B model.
+
+Additionally, multiple objectives could be experimented with, a requested requirement next to a hidden and test if that makes the monitor more lenient on a hidden objective.
